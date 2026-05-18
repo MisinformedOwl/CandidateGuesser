@@ -6,8 +6,10 @@ import random
 
 #---------------------------------------------------------------------------------------------
 
-def getImage(link: str, id: str):
-    urllib.request.urlretrieve(link, f"Candidates/{id}.jpg")
+def getImage(link: str, id: str) -> str:
+    path = f"Candidates/{id}.jpg"
+    urllib.request.urlretrieve(link, path)
+    return path
 
 
 def checkFolderExists():
@@ -24,7 +26,7 @@ def collectImages(data: pd.DataFrame):
         newData = pd.read_csv("candidates.csv", index_col=0)
     else:
         print("Creating empty data for candidates.")
-        newData = pd.DataFrame(columns=["id", "name", "party"])
+        newData = pd.DataFrame(columns=["id", "name", "party", "imageLoc"])
     
     caughtUp = True
     targetID = -1
@@ -47,9 +49,9 @@ def collectImages(data: pd.DataFrame):
             if not candidate["party_name"] in wantedParties: # Check if they are part of the 5 parties i'm checking for.
                 print(f"Unwanted party for candidate {candidate["person_id"]}")
                 continue
-            newData.loc[len(newData)] = [candidate["person_id"], candidate["person_name"], candidate["party_name"]]
+            path = getImage(candidate["image"], candidate["person_id"])
+            newData.loc[len(newData)] = [candidate["person_id"], candidate["person_name"], candidate["party_name"], path]
             print(candidate["image"])
-            getImage(candidate["image"], candidate["person_id"])
             sleep(1+random.random()/2)
     except KeyboardInterrupt:
         print("Ending search.")
