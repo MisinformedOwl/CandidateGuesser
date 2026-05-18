@@ -4,6 +4,8 @@ import pandas as pd
 from time import sleep
 import random
 
+#---------------------------------------------------------------------------------------------
+
 def getImage(link: str, id: str):
     urllib.request.urlretrieve(link, f"Candidates/{id}.jpg")
 
@@ -15,19 +17,34 @@ def checkFolderExists():
         os.mkdir(path)
 
 
-def loadData() -> pd.DataFrame:
-    return pd.read_csv("candidatesData.csv")
-
-
 def collectImages(data: pd.DataFrame):
     wantedParties = set({"Conservative and Unionist Party", "Reform UK", "Green Party", "Labour Party", "Liberal Democrats"})
-    newData = pd.DataFrame(columns=["id", "name", "party"])
+    if os.path.exists("candidates.csv"):
+        print("Loading existing data for candidates.")
+        newData = pd.read_csv("candidates.csv", index_col=0)
+    else:
+        print("Creating empty data for candidates.")
+        newData = pd.DataFrame(columns=["id", "name", "party"])
+    
+    caughtUp = True
+    targetID = -1
+    if newData.shape[0] > 0:
+        caughtUp = False
+        targetID = newData.loc[len(newData)-1]["id"]
+    
     try:
         for _, candidate in data.iterrows():
-            if pd.isna(candidate["image"]):
+            if not caughtUp:
+                if candidate["person_id"] != targetID:
+                    print("Continue to next candidate")
+                    continue
+                else:
+                    caughtUp = True
+                    continue
+            if pd.isna(candidate["image"]): # Check if candidate has an image.
                 print(f"No image for candidate {candidate["person_id"]}")
                 continue
-            if not candidate["party_name"] in wantedParties:
+            if not candidate["party_name"] in wantedParties: # Check if they are part of the 5 parties i'm checking for.
                 print(f"Unwanted party for candidate {candidate["person_id"]}")
                 continue
             newData.loc[len(newData)] = [candidate["person_id"], candidate["person_name"], candidate["party_name"]]
@@ -38,10 +55,12 @@ def collectImages(data: pd.DataFrame):
         print("Ending search.")
     except Exception as e:
         print(f"Unknown exception {e.__class__.__name__}")
+        print(e)
     newData.to_csv("candidates.csv")
 
+#---------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     checkFolderExists()
-    data = loadData()
+    data = pd.read_csv("candidatesData.csv")
     collectImages(data)
