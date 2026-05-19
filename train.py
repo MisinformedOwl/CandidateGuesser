@@ -13,6 +13,7 @@ from tqdm import tqdm
 #------------------------------------Globals----------------------------------------------
 
 partyDict = {"Conservative and Unionist Party" : 0, "Reform UK" : 1, "Green Party": 2, "Labour Party": 3, "Liberal Democrats": 4}
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #-----------------------------------Classes-----------------------------------------------
 
@@ -34,16 +35,14 @@ class candidateDataset(Dataset):
         """
         path = self.imagePaths[index]
         #Read image, set to RGB to avoid alpha channel. Then convert to a float so it can be normalised for use in a tensor.
-        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB).float() / 255.0
-        resize = v2.Resize((254,254), antialias=True)
-        image = resize(image)
+        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB).float().to(device) / 255.0
         if self.transform:
             image = self.transform(image)
 
         label = partyDict[self.labels[index]]
 
         
-        return image, torch.tensor(label)
+        return image, torch.tensor(label).to(device)
 
 
 class ModelBuild(nn.Module):
@@ -79,7 +78,7 @@ class ModelBuild(nn.Module):
         This is where the data is put forward.
         It is put into a for each loop to extract the data.
         """
-        outputs = torch.Tensor()
+        outputs = torch.Tensor().to(device)
         outputs = self.work(x)
         return outputs
 
@@ -94,6 +93,7 @@ def loadDataset(transforms: v2.Compose = None) -> candidateDataset:
 #----------------------------Main------------------------------------------
 
 if __name__ == "__main__":
+
     transforms = v2.Compose([
         v2.Resize(256),
         v2.CenterCrop((256,256)),
@@ -109,10 +109,11 @@ if __name__ == "__main__":
         dataset=trainData,
         batch_size=32,
         num_workers=2,
-        shuffle = True
+        shuffle = True,
+        persistent_workers=True
     )
 
-    model = ModelBuild()
+    model = ModelBuild().to(device)
 
     lossfn = nn.CrossEntropyLoss()
     epochs = 10
