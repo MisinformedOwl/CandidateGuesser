@@ -5,14 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 from torch.utils.data import Dataset, DataLoader, random_split
-from PIL import Image
 import pandas as pd
 import torchvision
 from torchvision.transforms import v2
+from tqdm import tqdm
 
 #------------------------------------Globals----------------------------------------------
 
-partyDict = {"Conservative and Unionist Party" : 1, "Reform UK" : 2, "Green Party": 3, "Labour Party": 4, "Liberal Democrats": 5}
+partyDict = {"Conservative and Unionist Party" : 0, "Reform UK" : 1, "Green Party": 2, "Labour Party": 3, "Liberal Democrats": 4}
 
 #-----------------------------------Classes-----------------------------------------------
 
@@ -35,7 +35,7 @@ class candidateDataset(Dataset):
         path = self.imagePaths[index]
         #Read image, set to RGB to avoid alpha channel. Then convert to a float so it can be normalised for use in a tensor.
         image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB).float() / 255.0
-        resize = v2.Resize((224,224), antialias=True)
+        resize = v2.Resize((254,254), antialias=True)
         image = resize(image)
         if self.transform:
             image = self.transform(image)
@@ -53,29 +53,57 @@ class ModelBuild(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(2,3,5)
+        self.conv1 = nn.Conv2d(3,16,3)
         self.pool = nn.MaxPool2d(2,2)
+        self.conv2 = nn.Conv2d(16,32,3)
+        self.conv3 = nn.Conv2d(32,32,3)
+
+        self.lin1 = nn.Linear(30*30*32, 256)
+        self.lin2 = nn.Linear(256, 5)
     
-    def forward(self, x):
+    def work(self, x):
         """
-        This is where the data is put forward.
+        This is where the data is sent, not in the form of a list.
         """
         x = self.pool(F.leaky_relu(self.conv1(x)))
         x = self.pool(F.leaky_relu(self.conv2(x)))
+        x = self.pool(F.leaky_relu(self.conv3(x)))
+        x = torch.flatten(x,1)
+        x = F.relu(self.lin1(x))
+        x = torch.dropout(x,0.2,self.training)
+        x = self.lin2(x)
         return x
+
+    def forward(self, x):
+        """
+        This is where the data is put forward.
+        It is put into a for each loop to extract the data.
+        """
+        outputs = torch.Tensor()
+        outputs = self.work(x)
+        return outputs
 
 #---------------------------------Functions--------------------------------------
 
-def loadDataset() -> candidateDataset:
+def loadDataset(transforms: v2.Compose = None) -> candidateDataset:
+    assert transforms != None
     print("Loading csv.")
     data = pd.read_csv("candidates.csv", index_col=0)
-    return candidateDataset(data["imageLoc"],data["party"])
+    return candidateDataset(data["imageLoc"],data["party"],transform=transforms)
 
 #----------------------------Main------------------------------------------
 
 if __name__ == "__main__":
-    dataset = loadDataset()
+    transforms = v2.Compose([
+        v2.Resize(256),
+        v2.CenterCrop((256,256)),
+        v2.ToImage(),
+        v2.ToDtype(torch.float32, scale=True)
+    ])
+
+    dataset = loadDataset(transforms)
     trainData, testData = random_split(dataset, [0.8,0.2], generator=Generator().manual_seed(42))
+    del dataset
 
     trainLoader = DataLoader(
         dataset=trainData,
@@ -90,17 +118,42 @@ if __name__ == "__main__":
     epochs = 10
     lr= 0.001
     optim = SGD(model.parameters(),lr=lr, momentum=0.9)
+    runningLoss = []
 
+    print("Training...")
     model.train()
-    for e in range(epochs):
+    for e in tqdm(range(epochs),desc="Training epochs"):
+        epochloss = 0
         for batch in trainLoader:
-            print(type(batch), batch)
-            os.exit(0)
             images, labels = batch
             optim.zero_grad()
-            # get results
-            outputs = model(batch)
+            
+            outputs = model(images)
             loss = lossfn(outputs, labels)
+            epochloss += loss
             loss.backward()
             optim.step()
-            #loss data analysis.
+        runningLoss.append(epochloss)
+    
+    del trainLoader
+    testLoader = DataLoader(
+        dataset=testData,
+        batch_size=32,
+        num_workers=2,
+        shuffle = True
+    )
+
+    print("Testing...")
+    model.eval()
+    trueCount = 0
+    totalCount = 0
+    for batch in testLoader:
+        outputs = model(batch[0])
+        outputs = torch.argmax(outputs, dim=1)
+        for output, label in zip(outputs, batch[1]):
+            totalCount+=1
+            if torch.equal(output,label):
+                trueCount += 1
+    print(f"trueCount: {trueCount}")
+    print(f"totalCount: {totalCount}")
+    print(f"Accuracy: {trueCount/totalCount}")
