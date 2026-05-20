@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 #------------------------------------Globals----------------------------------------------
 
-partyDict = {"Conservative and Unionist Party" : 0, "Reform UK" : 1, "Green Party": 2, "Labour Party": 3, "Liberal Democrats": 4}
+partyDict = {"Conservative and Unionist Party" : 0, "Green Party": 1, "Labour Party": 2, "Liberal Democrats": 3, "Reform UK" : 4}
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #-----------------------------------Classes-----------------------------------------------
@@ -35,14 +35,14 @@ class candidateDataset(Dataset):
         """
         path = self.imagePaths[index]
         #Read image, set to RGB to avoid alpha channel. Then convert to a float so it can be normalised for use in a tensor.
-        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB).float().to(device) / 255.0
+        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB)
+
         if self.transform:
             image = self.transform(image)
 
         label = partyDict[self.labels[index]]
 
-        
-        return image, torch.tensor(label).to(device)
+        return image, torch.tensor(label)
 
 
 class ModelBuild(nn.Module):
@@ -51,48 +51,60 @@ class ModelBuild(nn.Module):
     """
     def __init__(self):
         super().__init__()
-
-        self.conv1 = nn.Conv2d(3,16,3)
-        self.pool = nn.MaxPool2d(2,2)
-        self.conv2 = nn.Conv2d(16,32,3)
-        self.conv3 = nn.Conv2d(32,32,3)
-
-        self.lin1 = nn.Linear(30*30*32, 256)
-        self.lin2 = nn.Linear(256, 5)
-    
-    def work(self, x):
-        """
-        This is where the data is sent, not in the form of a list.
-        """
-        x = self.pool(F.leaky_relu(self.conv1(x)))
-        x = self.pool(F.leaky_relu(self.conv2(x)))
-        x = self.pool(F.leaky_relu(self.conv3(x)))
-        x = torch.flatten(x,1)
-        x = F.relu(self.lin1(x))
-        x = torch.dropout(x,0.2,self.training)
-        x = self.lin2(x)
-        return x
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2,2),
+            
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2,2),
+            
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2,2),
+            
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2,2),
+        )
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d((4,4)),   # Makes it robust to input size
+            nn.Flatten(),
+            nn.Linear(256*4*4, 512),
+            nn.Dropout(0.5),
+            nn.LeakyReLU(0.1),
+            nn.Linear(512, 128),
+            nn.Dropout(0.4),
+            nn.LeakyReLU(0.1),
+            nn.Linear(128, 5)
+        )
 
     def forward(self, x):
-        """
-        This is where the data is put forward.
-        It is put into a for each loop to extract the data.
-        """
-        outputs = torch.Tensor().to(device)
-        outputs = self.work(x)
-        return outputs
-
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+    
 #---------------------------------Functions--------------------------------------
 
 def loadDataset(transforms: v2.Compose = None) -> candidateDataset:
     assert transforms != None
     print("Loading csv.")
     data = pd.read_csv("candidates.csv", index_col=0)
-    return candidateDataset(data["imageLoc"],data["party"],transform=transforms)
+    return candidateDataset(data["imageLoc"],data["party"],transform=transforms), setClassWeights(data)
+
+
+def setClassWeights(data: pd.DataFrame):
+    counts = data.groupby("party").size()
+    weights = counts.max()/counts
+    weights = weights/weights.max()
+    return torch.Tensor(weights).to(device)
+
 
 #----------------------------Main------------------------------------------
 
 if __name__ == "__main__":
+    print(f"Using {device} for training.")
 
     transforms = v2.Compose([
         v2.Resize(256),
@@ -101,7 +113,7 @@ if __name__ == "__main__":
         v2.ToDtype(torch.float32, scale=True)
     ])
 
-    dataset = loadDataset(transforms)
+    dataset, classWeights = loadDataset(transforms)
     trainData, testData = random_split(dataset, [0.8,0.2], generator=Generator().manual_seed(42))
     del dataset
 
@@ -109,17 +121,19 @@ if __name__ == "__main__":
         dataset=trainData,
         batch_size=32,
         num_workers=2,
-        shuffle = True,
+        shuffle=True,
         persistent_workers=True
     )
 
     model = ModelBuild().to(device)
 
-    lossfn = nn.CrossEntropyLoss()
-    epochs = 10
-    lr= 0.001
-    optim = SGD(model.parameters(),lr=lr, momentum=0.9)
+    print(f"Class weights are... {classWeights}")
+    lossfn = nn.CrossEntropyLoss(weight=classWeights)
+    epochs = 20
+    lr= 0.0001
+    optim = SGD(model.parameters(),lr=lr, momentum=0.9, weight_decay=1e-4)
     runningLoss = []
+    
 
     print("Training...")
     model.train()
@@ -127,6 +141,8 @@ if __name__ == "__main__":
         epochloss = 0
         for batch in trainLoader:
             images, labels = batch
+            images = images.to(device)
+            labels = labels.to(device)
             optim.zero_grad()
             
             outputs = model(images)
@@ -149,12 +165,17 @@ if __name__ == "__main__":
     trueCount = 0
     totalCount = 0
     for batch in testLoader:
-        outputs = model(batch[0])
+        images, labels = batch
+        images = images.to(device)
+        labels = labels.to(device)
+        outputs = model(images)
         outputs = torch.argmax(outputs, dim=1)
-        for output, label in zip(outputs, batch[1]):
+        print(outputs)
+        for output, label in zip(outputs, labels):
             totalCount+=1
             if torch.equal(output,label):
                 trueCount += 1
+    del testLoader
     print(f"trueCount: {trueCount}")
     print(f"totalCount: {totalCount}")
     print(f"Accuracy: {trueCount/totalCount}")
