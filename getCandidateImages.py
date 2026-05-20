@@ -38,7 +38,6 @@ def collectImages(data: pd.DataFrame):
         for _, candidate in data.iterrows():
             if not caughtUp:
                 if candidate["person_id"] != targetID:
-                    print("Continue to next candidate")
                     continue
                 else:
                     caughtUp = True
@@ -47,7 +46,7 @@ def collectImages(data: pd.DataFrame):
                 print(f"No image for candidate {candidate["person_id"]}")
                 continue
             if not candidate["party_name"] in wantedParties: # Check if they are part of the 5 parties i'm checking for.
-                print(f"Unwanted party for candidate {candidate["person_id"]}")
+                print(f"Unwanted party {candidate['party_name']} for candidate {candidate["person_id"]}")
                 continue
             path = getImage(candidate["image"], candidate["person_id"])
             newData.loc[len(newData)] = [candidate["person_id"], candidate["person_name"], candidate["party_name"], path]
