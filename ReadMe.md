@@ -1,5 +1,8 @@
 # The Candidate Detector
 
+### Abandoned
+After finally making the AI, i realise that there is no real way for the AI to discern the data, similarly to how me and my friends were unable to ourselves. And so therefore, given the quality of images, aswell as the lack of other inforamtion to use inside of the training. I have decided to stop working on this and return to learning about data engineering.
+
 ### Why did i make this?
 Me and some friends were on a website where we had to guess based off a picture, which political party a candidate belonged to. And throughout this i could not stop thinking about if i could make convolutional neural network detect this, and then further more. Find out what party it thinks me and my friends are part off.
 
